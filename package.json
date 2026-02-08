@@ -1,0 +1,45 @@
+{
+  "name": "guild",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:db": "RUN_DB_TESTS=true TEST_DATABASE_URL=${TEST_DATABASE_URL:-postgresql://guild:guild@localhost:5432/guild?schema=test_module2} TEST_DATABASE_ADMIN_URL=${TEST_DATABASE_ADMIN_URL:-postgresql://guild:guild@localhost:5432/guild?schema=public} vitest run src/lib/db.crud.test.ts",
+    "db:up": "sh scripts/compose.sh up -d postgres",
+    "db:down": "sh scripts/compose.sh down",
+    "db:reset": "sh scripts/compose.sh down -v && sh scripts/compose.sh up -d postgres",
+    "db:logs": "sh scripts/compose.sh logs --tail=120 postgres",
+    "db:logs:follow": "sh scripts/compose.sh logs -f postgres",
+    "db:generate": "DATABASE_URL=${DATABASE_URL:-postgresql://guild:guild@localhost:5432/guild?schema=public} prisma generate",
+    "db:push": "DATABASE_URL=${DATABASE_URL:-postgresql://guild:guild@localhost:5432/guild?schema=public} prisma db push",
+    "db:migrate": "DATABASE_URL=${DATABASE_URL:-postgresql://guild:guild@localhost:5432/guild?schema=public} prisma migrate dev",
+    "db:migrate:deploy": "DATABASE_URL=${DATABASE_URL:-postgresql://guild:guild@localhost:5432/guild?schema=public} prisma migrate deploy",
+    "db:seed": "DATABASE_URL=${DATABASE_URL:-postgresql://guild:guild@localhost:5432/guild?schema=public} tsx prisma/seed.ts",
+    "gemini:probe": "node scripts/probe-gemini.mjs"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.16.2",
+    "@xyflow/react": "^12.10.0",
+    "next": "16.1.6",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.6",
+    "prisma": "^6.16.2",
+    "tailwindcss": "^4",
+    "tsx": "^4.21.0",
+    "typescript": "^5",
+    "vitest": "^3.2.4"
+  }
+}

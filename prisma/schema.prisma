@@ -1,0 +1,323 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Workspace {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  boardState BoardState?
+  agents     Agent[]
+  channels   Channel[]
+  vaultItems VaultItem[]
+  mounts     Mount[]
+  mountAuditEntries MountAuditEntry[]
+  runs       Run[]
+  votes      Vote[]
+  policies   Policy[]
+}
+
+model BoardState {
+  id          String   @id @default(cuid())
+  workspaceId String   @unique
+  nodes       Json
+  edges       Json
+  viewport    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model Agent {
+  id                   String          @id @default(cuid())
+  workspaceId          String
+  boardNodeId          String?
+  name                 String
+  role                 AgentRole
+  objective            String?
+  persona              String?
+  constraints          Json?
+  authorityWeight      Int             @default(1)
+  thinkingProfile      ThinkingProfile @default(STANDARD)
+  privateMemoryEnabled Boolean         @default(false)
+  metadata             Json?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  sourceChannels Channel[] @relation("ChannelSource")
+  targetChannels Channel[] @relation("ChannelTarget")
+  turns          Turn[]
+  mounts         Mount[]   @relation("AgentMounts")
+
+  @@index([workspaceId])
+  @@unique([workspaceId, boardNodeId])
+}
+
+model Channel {
+  id                  String            @id @default(cuid())
+  workspaceId         String
+  boardEdgeId         String?
+  name                String
+  description         String?
+  visibility          ChannelVisibility @default(PUBLIC)
+  sourceAgentId       String
+  targetAgentId       String
+  allowedMessageTypes Json?
+  readerAgentIds      Json?
+  writerAgentIds      Json?
+  metadata            Json?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  sourceAgent Agent     @relation("ChannelSource", fields: [sourceAgentId], references: [id], onDelete: Cascade)
+  targetAgent Agent     @relation("ChannelTarget", fields: [targetAgentId], references: [id], onDelete: Cascade)
+  turns       Turn[]
+  mounts      Mount[]   @relation("ChannelMounts")
+  policies    Policy[]  @relation("ChannelPolicies")
+
+  @@index([workspaceId])
+  @@unique([workspaceId, boardEdgeId])
+  @@index([sourceAgentId])
+  @@index([targetAgentId])
+}
+
+model VaultItem {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  fileName    String
+  mimeType    String
+  byteSize    Int
+  storageKey  String
+  tags        Json?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  mounts    Mount[]
+
+  @@index([workspaceId])
+}
+
+model Mount {
+  id          String     @id @default(cuid())
+  workspaceId String
+  vaultItemId String
+  scope       MountScope
+  agentId     String?
+  channelId   String?
+  runId       String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  vaultItem VaultItem @relation(fields: [vaultItemId], references: [id], onDelete: Cascade)
+  agent     Agent?    @relation("AgentMounts", fields: [agentId], references: [id], onDelete: SetNull)
+  channel   Channel?  @relation("ChannelMounts", fields: [channelId], references: [id], onDelete: SetNull)
+  run       Run?      @relation("RunMounts", fields: [runId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([vaultItemId])
+  @@index([scope])
+}
+
+model MountAuditEntry {
+  id         String           @id @default(cuid())
+  workspaceId String
+  mountId    String?
+  action     MountAuditAction
+  scope      MountScope
+  vaultItemId String
+  agentId    String?
+  channelId  String?
+  runId      String?
+  actorName  String?
+  createdAt  DateTime         @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([createdAt])
+}
+
+model Run {
+  id            String      @id @default(cuid())
+  workspaceId   String
+  name          String?
+  template      RunTemplate @default(CUSTOM)
+  status        RunStatus   @default(DRAFT)
+  boardSnapshot Json?
+  state         Json?
+  startedAt     DateTime?
+  endedAt       DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  turns     Turn[]
+  mounts    Mount[]   @relation("RunMounts")
+  votes     Vote[]
+  policies  Policy[]  @relation("RunPolicies")
+
+  @@index([workspaceId])
+  @@index([status])
+}
+
+model Turn {
+  id           String     @id @default(cuid())
+  runId        String
+  sequence     Int
+  actorAgentId String?
+  channelId    String?
+  status       TurnStatus @default(QUEUED)
+  input        Json?
+  output       Json?
+  error        String?
+  startedAt    DateTime?
+  endedAt      DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  run        Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  actorAgent Agent?   @relation(fields: [actorAgentId], references: [id], onDelete: SetNull)
+  channel    Channel? @relation(fields: [channelId], references: [id], onDelete: SetNull)
+
+  @@unique([runId, sequence])
+  @@index([runId])
+  @@index([actorAgentId])
+}
+
+model Vote {
+  id          String     @id @default(cuid())
+  workspaceId String
+  runId       String
+  question    String
+  status      VoteStatus @default(OPEN)
+  quorum      Int?
+  threshold   Int?
+  options     Json?
+  weights     Json?
+  ballots     Json?
+  result      Json?
+  openedAt    DateTime   @default(now())
+  closedAt    DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  run       Run       @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([runId])
+  @@index([status])
+}
+
+model Policy {
+  id          String      @id @default(cuid())
+  workspaceId String
+  name        String
+  kind        PolicyKind
+  scope       PolicyScope @default(WORKSPACE)
+  isActive    Boolean     @default(true)
+  config      Json
+  channelId   String?
+  runId       String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel   Channel?  @relation("ChannelPolicies", fields: [channelId], references: [id], onDelete: SetNull)
+  run       Run?      @relation("RunPolicies", fields: [runId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([scope])
+}
+
+enum AgentRole {
+  EXECUTIVE
+  DIRECTOR
+  MANAGER
+  SPECIALIST
+  OPERATOR
+}
+
+enum ThinkingProfile {
+  FAST
+  STANDARD
+  DEEP
+}
+
+enum ChannelVisibility {
+  PUBLIC
+  PRIVATE
+}
+
+enum MountScope {
+  AGENT
+  CHANNEL
+  RUN
+}
+
+enum MountAuditAction {
+  CREATED
+  REMOVED
+}
+
+enum RunTemplate {
+  DEBATE
+  ORG
+  GAME
+  CUSTOM
+}
+
+enum RunStatus {
+  DRAFT
+  QUEUED
+  RUNNING
+  BLOCKED
+  COMPLETED
+  FAILED
+  CANCELED
+}
+
+enum TurnStatus {
+  QUEUED
+  RUNNING
+  BLOCKED
+  COMPLETED
+  FAILED
+  SKIPPED
+}
+
+enum VoteStatus {
+  OPEN
+  CLOSED
+  CANCELED
+}
+
+enum PolicyKind {
+  APPROVAL
+  VETO
+  ESCALATION
+  CONSENSUS
+  CUSTOM
+}
+
+enum PolicyScope {
+  WORKSPACE
+  RUN
+  CHANNEL
+}

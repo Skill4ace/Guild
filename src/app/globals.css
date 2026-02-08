@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+:root {
+  --color-bg-0: #f2f6f7;
+  --color-bg-1: #dcebf0;
+  --color-bg-2: #fef8eb;
+  --color-surface: #ffffff;
+  --color-ink: #0f172a;
+  --color-muted: #3f4d63;
+  --color-accent: #ea580c;
+  --color-accent-soft: #ffedd5;
+  --color-line: #d5e0e8;
+}
+
+@theme inline {
+  --font-sans: var(--font-space-grotesk);
+  --font-mono: var(--font-ibm-plex-mono);
+}
+
+body {
+  color: var(--color-ink);
+  background:
+    radial-gradient(circle at 10% -10%, var(--color-bg-1) 0%, transparent 40%),
+    radial-gradient(circle at 90% 20%, var(--color-bg-2) 0%, transparent 45%),
+    linear-gradient(180deg, #fbfdfe 0%, var(--color-bg-0) 100%);
+  font-family: var(--font-space-grotesk), sans-serif;
+  min-height: 100vh;
+}
+
+.guild-card {
+  background: color-mix(in srgb, var(--color-surface) 92%, #ffffff 8%);
+  border: 1px solid var(--color-line);
+  box-shadow:
+    0 24px 48px -36px rgba(15, 23, 42, 0.4),
+    0 8px 16px -12px rgba(15, 23, 42, 0.2);
+  backdrop-filter: blur(6px);
+}
+
+.guild-chip {
+  border: 1px solid color-mix(in srgb, var(--color-accent) 35%, #ffffff 65%);
+  background: var(--color-accent-soft);
+  color: #9a3412;
+}
+
+.guild-muted {
+  color: var(--color-muted);
+}
