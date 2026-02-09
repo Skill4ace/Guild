@@ -41,11 +41,9 @@ export default async function StudioHomePage() {
         <p className="text-xs font-semibold tracking-[0.2em] text-orange-700">
           WORKSPACES
         </p>
-        <h1 className="mt-3 text-3xl font-bold text-slate-950">
-          Select a workspace and open the execution surface.
-        </h1>
-        <p className="guild-muted mt-3 text-sm sm:text-base">
-          Every workspace contains Board, Vault, Runs, and Templates views.
+        <h1 className="mt-3 text-3xl font-bold text-slate-950">Select a workspace.</h1>
+        <p className="guild-muted mt-2 text-sm sm:text-base">
+          Open one to continue.
         </p>
 
         {dbUnavailable ? (
@@ -72,9 +70,6 @@ export default async function StudioHomePage() {
                     <p className="guild-muted text-sm">
                       {workspace.description || "No description"}
                     </p>
-                    <p className="guild-muted mt-1 text-xs">
-                      slug: {workspace.slug}
-                    </p>
                   </div>
 
                   <div className="flex items-center gap-2">
@@ -98,9 +93,7 @@ export default async function StudioHomePage() {
 
       <aside className="guild-card rounded-3xl p-6 sm:p-8">
         <h2 className="text-xl font-bold text-slate-950">Create Workspace</h2>
-        <p className="guild-muted mt-2 text-sm">
-          This creates a new studio surface and navigation entry.
-        </p>
+        <p className="guild-muted mt-2 text-sm">Name it and choose a setup.</p>
         <div className="mt-5">
           <CreateWorkspaceForm />
         </div>

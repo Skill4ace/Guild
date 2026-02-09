@@ -6,6 +6,7 @@ import {
   normalizeGeminiTurnOutput,
   pickDefaultMessageType,
   selectGeminiModel,
+  synthesizeGeminiFinalDraft,
 } from "./gemini-client";
 
 describe("gemini-client", () => {
@@ -99,6 +100,11 @@ describe("gemini-client", () => {
         id: "candidate-1",
         sourceAgentName: "Avery Exec",
         sourceAgentObjective: "Make a final recommendation.",
+        sourceAgentTools: {
+          googleSearchEnabled: false,
+          codeExecutionEnabled: false,
+          imageGenerationEnabled: false,
+        },
         targetAgentName: "Quinn QA",
         targetAgentObjective: "Challenge quality and evidence gaps.",
         allowedMessageTypes: ["proposal", "decision"],
@@ -218,6 +224,11 @@ describe("gemini-client", () => {
         id: "candidate-retry",
         sourceAgentName: "Avery Exec",
         sourceAgentObjective: "Request follow-up analysis.",
+        sourceAgentTools: {
+          googleSearchEnabled: false,
+          codeExecutionEnabled: false,
+          imageGenerationEnabled: false,
+        },
         targetAgentName: "Quinn QA",
         targetAgentObjective: "Review and respond.",
         allowedMessageTypes: ["proposal", "critique"],
@@ -262,6 +273,11 @@ describe("gemini-client", () => {
           id: "candidate-fail",
           sourceAgentName: "Avery Exec",
           sourceAgentObjective: "Request follow-up analysis.",
+          sourceAgentTools: {
+            googleSearchEnabled: false,
+            codeExecutionEnabled: false,
+            imageGenerationEnabled: false,
+          },
           targetAgentName: "Quinn QA",
           targetAgentObjective: "Review and respond.",
           allowedMessageTypes: ["proposal", "critique"],
@@ -303,6 +319,11 @@ describe("gemini-client", () => {
           id: "candidate-hard-quota",
           sourceAgentName: "Avery Exec",
           sourceAgentObjective: "Request analysis.",
+          sourceAgentTools: {
+            googleSearchEnabled: false,
+            codeExecutionEnabled: false,
+            imageGenerationEnabled: false,
+          },
           targetAgentName: "Quinn QA",
           targetAgentObjective: "Respond with review.",
           allowedMessageTypes: ["proposal", "critique"],
@@ -312,5 +333,107 @@ describe("gemini-client", () => {
     ).rejects.toBeInstanceOf(GeminiApiError);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns deterministic final draft when synthesis API key is absent", async () => {
+    const result = await synthesizeGeminiFinalDraft({
+      runName: "Draft Run",
+      runObjective: "Produce a final campaign plan.",
+      runStatus: "COMPLETED",
+      updatedAt: "2026-02-09T00:00:00.000Z",
+      turns: [
+        {
+          sequence: 1,
+          status: "COMPLETED",
+          actorName: "Lead Architect",
+          channelName: "Lead to Planner",
+          messageType: "proposal",
+          summary: "Define launch narrative and success metrics.",
+          rationale: "Need alignment before execution.",
+          payload: null,
+          artifacts: [],
+          endedAt: "2026-02-09T00:00:01.000Z",
+          startedAt: "2026-02-09T00:00:00.000Z",
+        },
+      ],
+      vote: null,
+      deadlock: null,
+      apiKey: "",
+    });
+
+    expect(result.telemetry.source).toBe("fallback");
+    expect(result.draft.synthesisSource).toBe("deterministic");
+    expect(result.draft.sections.length).toBeGreaterThan(0);
+  });
+
+  it("uses model synthesis output when final-draft JSON is valid", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    text: JSON.stringify({
+                      recommendation: "Approve the strategy and execute weekly checkpoints.",
+                      summary: "Deliverable includes messaging, channels, KPI gates, and actions.",
+                      statusLabel: "Final synthesis ready",
+                      sections: [
+                        {
+                          id: "strategy",
+                          title: "Strategy",
+                          lines: [
+                            "Anchor positioning on governed multi-agent execution.",
+                            "Prioritize measurable channel milestones.",
+                          ],
+                          sourceSequences: [1],
+                        },
+                      ],
+                    }),
+                  },
+                ],
+              },
+            },
+          ],
+          usageMetadata: {
+            promptTokenCount: 120,
+            candidatesTokenCount: 45,
+            totalTokenCount: 165,
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const result = await synthesizeGeminiFinalDraft({
+      runName: "Draft Run",
+      runObjective: "Produce a final campaign plan.",
+      runStatus: "COMPLETED",
+      updatedAt: "2026-02-09T00:00:00.000Z",
+      turns: [
+        {
+          sequence: 1,
+          status: "COMPLETED",
+          actorName: "Lead Architect",
+          channelName: "Lead to Planner",
+          messageType: "proposal",
+          summary: "Define launch narrative and success metrics.",
+          rationale: "Need alignment before execution.",
+          payload: null,
+          artifacts: [],
+          endedAt: "2026-02-09T00:00:01.000Z",
+          startedAt: "2026-02-09T00:00:00.000Z",
+        },
+      ],
+      vote: null,
+      deadlock: null,
+      apiKey: "test-key",
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.telemetry.source).toBe("live");
+    expect(result.draft.synthesisSource).toBe("model");
+    expect(result.draft.recommendation).toContain("Approve the strategy");
   });
 });

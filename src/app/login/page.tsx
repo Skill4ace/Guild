@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { getSessionUser } from "@/lib/auth-server";
@@ -45,13 +44,6 @@ export default async function LoginPage() {
           </p>
 
           <LoginForm />
-
-          <p className="guild-muted mt-4 text-xs">
-            Need the landing page?{" "}
-            <Link href="/" className="font-medium text-slate-900 underline">
-              Back to home
-            </Link>
-          </p>
         </div>
       </section>
     </main>

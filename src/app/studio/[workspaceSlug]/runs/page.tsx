@@ -13,10 +13,7 @@ export default async function RunsPage({ params }: RunsPageProps) {
 
   const workspace = await prisma.workspace.findUnique({
     where: { slug: workspaceSlug },
-    select: {
-      id: true,
-      name: true,
-    },
+    select: { id: true },
   });
 
   if (!workspace) {
@@ -24,10 +21,7 @@ export default async function RunsPage({ params }: RunsPageProps) {
   }
 
   return (
-    <div className="space-y-3">
-      <p className="guild-muted text-sm">
-        Run, replay, and inspect execution for <code>{workspace.name}</code>.
-      </p>
+    <div>
       <RunsConsole workspaceSlug={workspaceSlug} />
     </div>
   );

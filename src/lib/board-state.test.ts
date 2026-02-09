@@ -60,6 +60,11 @@ describe("board-state", () => {
     expect(board.nodes[0].data.authorityWeight).toBe(1);
     expect(board.nodes[0].data.thinkingProfile).toBe("fast");
     expect(board.nodes[0].data.privateMemoryEnabled).toBe(false);
+    expect(board.nodes[0].data.tools).toEqual({
+      googleSearchEnabled: false,
+      codeExecutionEnabled: false,
+      imageGenerationEnabled: false,
+    });
     expect(board.edges).toHaveLength(1);
     expect(board.edges[0].label).toBe("step 2 | private | proposal");
     expect(board.edges[0].data?.stepOrder).toBe(2);

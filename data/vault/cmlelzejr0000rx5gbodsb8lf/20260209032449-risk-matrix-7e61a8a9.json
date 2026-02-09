@@ -1,0 +1,12 @@
+{
+  "enterprise": {
+    "executionRisk": "medium",
+    "complianceRisk": "high",
+    "revenuePotential": "high"
+  },
+  "creator": {
+    "executionRisk": "low",
+    "complianceRisk": "medium",
+    "revenuePotential": "medium"
+  }
+}

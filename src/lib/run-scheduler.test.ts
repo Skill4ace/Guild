@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { CompiledTurnCandidate } from "./run-compiler";
 import {
@@ -26,6 +26,11 @@ function createCandidate(
     sourceAgentId: "agent-a",
     sourceAgentName: "Avery Exec",
     sourceAgentObjective: "Approve the final decision.",
+    sourceAgentTools: {
+      googleSearchEnabled: false,
+      codeExecutionEnabled: false,
+      imageGenerationEnabled: false,
+    },
     targetAgentId: "agent-b",
     targetAgentName: "Quinn QA",
     targetAgentObjective: "Challenge weak assumptions.",
@@ -38,6 +43,11 @@ function createCandidate(
 }
 
 describe("run-scheduler", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete process.env.GEMINI_API_KEY;
+  });
+
   it("normalizes scheduler runtime options from state and overrides", () => {
     const runtime = resolveSchedulerRuntimeOptions(
       {
@@ -132,5 +142,41 @@ describe("run-scheduler", () => {
     } catch (error) {
       expect(isRetryableSchedulerError(error)).toBe(true);
     }
+  });
+
+  it("falls back instead of blocking on real turn timeout", async () => {
+    process.env.GEMINI_API_KEY = "test-key";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      await new Promise(() => {
+        // Never resolve to simulate a hung upstream request.
+      });
+      return new Response("{}");
+    });
+
+    const candidate = createCandidate({
+      allowedMessageTypes: ["proposal", "critique"],
+    });
+    const runtime = resolveSchedulerRuntimeOptions(undefined, {
+      ...DEFAULT_SCHEDULER_RUNTIME_OPTIONS,
+      turnTimeoutMs: 500,
+      timeoutFailureSequences: [],
+    });
+
+    const result = await executeDeterministicTurnAttempt({
+      runId: "run-timeout-fallback",
+      runObjective: "Keep run alive after timeout.",
+      sequence: 1,
+      attempt: 1,
+      candidate,
+      conversationContext: EMPTY_CONVERSATION_CONTEXT,
+      role: "manager",
+      thinkingProfile: "standard",
+      isLastQueuedTurn: false,
+      runtimeOptions: runtime,
+    });
+
+    expect(result.validationStatus).toBe("fallback");
+    expect(result.routeReason).toContain("timeout-fallback");
+    expect(result.summary.toLowerCase()).toContain("timeout fallback");
   });
 });

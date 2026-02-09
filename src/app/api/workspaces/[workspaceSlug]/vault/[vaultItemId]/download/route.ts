@@ -54,6 +54,8 @@ export async function GET(request: Request, context: RouteContext) {
   }
 
   try {
+    const requestUrl = new URL(request.url);
+    const inline = requestUrl.searchParams.get("inline") === "1";
     const fileBuffer = await readVaultBuffer(item.storageKey);
     const fileBody = new Uint8Array(fileBuffer);
     const fallbackName = safeDownloadName(item.fileName);
@@ -63,7 +65,9 @@ export async function GET(request: Request, context: RouteContext) {
       headers: {
         "Content-Type": item.mimeType || "application/octet-stream",
         "Content-Length": String(fileBody.byteLength),
-        "Content-Disposition": `attachment; filename=\"${fallbackName}\"; filename*=UTF-8''${encodeURIComponent(item.fileName)}`,
+        "Content-Disposition": inline
+          ? `inline; filename=\"${fallbackName}\"; filename*=UTF-8''${encodeURIComponent(item.fileName)}`
+          : `attachment; filename=\"${fallbackName}\"; filename*=UTF-8''${encodeURIComponent(item.fileName)}`,
         "Cache-Control": "no-store",
       },
     });

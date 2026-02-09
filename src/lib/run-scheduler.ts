@@ -26,6 +26,9 @@ import { resolveMountContextFromMounts } from "./mount-manager";
 import type { CompiledRunPlan, CompiledTurnCandidate } from "./run-compiler";
 import {
   executeGeminiTurn,
+  generateGeminiImageArtifact,
+  selectGeminiModel,
+  synthesizeGeminiFinalDraft,
   type GeminiPromptContextWindow,
   type GeminiTurnTelemetry,
 } from "./gemini-client";
@@ -33,12 +36,15 @@ import type {
   AgentActOutput,
   StructuredValidationIssue,
 } from "./structured-output";
+import { buildFallbackAgentActOutput } from "./structured-output";
 import {
   buildDefaultToolCallsForTurn,
   executeToolGatewayBatch,
   type ToolGatewayCallEvent,
   type ToolGatewaySummary,
 } from "./tool-gateway";
+import { createVaultStorageKey } from "./vault";
+import { deleteVaultBuffer, writeVaultBuffer } from "./vault-storage";
 import {
   chooseDeterministicVoteOption,
   normalizeVoteOptions,
@@ -92,6 +98,7 @@ export const DEFAULT_SCHEDULER_RUNTIME_OPTIONS: SchedulerRuntimeOptions = {
 
 type RunRecord = {
   id: string;
+  name: string | null;
   workspaceId: string;
   status: RunStatus;
   startedAt: Date | null;
@@ -174,6 +181,15 @@ type SimulatedTurnOutput = {
     action: MediatorAction | null;
     note: string | null;
   };
+  artifacts?: Array<{
+    kind: "image";
+    vaultItemId: string;
+    name: string;
+    fileName: string;
+    mimeType: string;
+    byteSize: number;
+    model: string;
+  }>;
   toolCalls?: ToolGatewayCallEvent[];
   toolSummary?: ToolGatewaySummary;
   toolEffects?: {
@@ -312,6 +328,24 @@ function parseOutputSummary(output: Prisma.JsonValue | null): string | null {
   return null;
 }
 
+function extensionForMimeType(mimeType: string): string {
+  const normalized = mimeType.trim().toLowerCase();
+  if (normalized === "image/png") {
+    return ".png";
+  }
+  if (normalized === "image/jpeg") {
+    return ".jpg";
+  }
+  if (normalized === "image/webp") {
+    return ".webp";
+  }
+  if (normalized === "image/gif") {
+    return ".gif";
+  }
+
+  return ".png";
+}
+
 function parseOutputConfidence(output: Prisma.JsonValue | null): number | null {
   if (!output || typeof output !== "object" || Array.isArray(output)) {
     return null;
@@ -338,6 +372,138 @@ function parseOutputConfidence(output: Prisma.JsonValue | null): number | null {
   }
 
   return null;
+}
+
+function parseOutputRationale(output: Prisma.JsonValue | null): string | null {
+  if (!output || typeof output !== "object" || Array.isArray(output)) {
+    return null;
+  }
+
+  const payload = output as Record<string, unknown>;
+  const direct = payload.rationale;
+  if (typeof direct === "string" && direct.trim().length > 0) {
+    return direct.trim().slice(0, 360);
+  }
+
+  const normalizedOutput =
+    payload.normalizedOutput &&
+    typeof payload.normalizedOutput === "object" &&
+    !Array.isArray(payload.normalizedOutput)
+      ? (payload.normalizedOutput as Record<string, unknown>)
+      : null;
+  const normalizedRationale = normalizedOutput?.rationale;
+  if (
+    typeof normalizedRationale === "string" &&
+    normalizedRationale.trim().length > 0
+  ) {
+    return normalizedRationale.trim().slice(0, 360);
+  }
+
+  return null;
+}
+
+function parseOutputPayload(output: Prisma.JsonValue | null): Record<string, unknown> | null {
+  if (!output || typeof output !== "object" || Array.isArray(output)) {
+    return null;
+  }
+
+  const payload = (output as Record<string, unknown>).payload;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+
+  return payload as Record<string, unknown>;
+}
+
+function parseOutputArtifacts(
+  output: Prisma.JsonValue | null,
+): Array<{
+  kind: string;
+  vaultItemId: string;
+  name: string;
+  fileName: string;
+  mimeType: string;
+  byteSize: number;
+  model: string | null;
+}> {
+  if (!output || typeof output !== "object" || Array.isArray(output)) {
+    return [];
+  }
+
+  const artifacts = (output as Record<string, unknown>).artifacts;
+  if (!Array.isArray(artifacts)) {
+    return [];
+  }
+
+  return artifacts
+    .map((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        return null;
+      }
+
+      const artifact = entry as Record<string, unknown>;
+      const kind = typeof artifact.kind === "string" ? artifact.kind : "asset";
+      const vaultItemId =
+        typeof artifact.vaultItemId === "string" ? artifact.vaultItemId : null;
+      const name = typeof artifact.name === "string" ? artifact.name : null;
+      const fileName = typeof artifact.fileName === "string" ? artifact.fileName : null;
+      const mimeType = typeof artifact.mimeType === "string" ? artifact.mimeType : null;
+      const byteSize =
+        typeof artifact.byteSize === "number" && Number.isFinite(artifact.byteSize)
+          ? Math.max(0, Math.round(artifact.byteSize))
+          : null;
+
+      if (!vaultItemId || !name || !fileName || !mimeType || byteSize === null) {
+        return null;
+      }
+
+      return {
+        kind,
+        vaultItemId,
+        name,
+        fileName,
+        mimeType,
+        byteSize,
+        model: typeof artifact.model === "string" ? artifact.model : null,
+      };
+    })
+    .filter(
+      (
+        entry,
+      ): entry is {
+        kind: string;
+        vaultItemId: string;
+        name: string;
+        fileName: string;
+        mimeType: string;
+        byteSize: number;
+        model: string | null;
+      } => entry !== null,
+    );
+}
+
+function parseVoteResult(
+  value: Prisma.JsonValue | null,
+): {
+  outcome: string | null;
+  winner: string | null;
+  explanation: string | null;
+} {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {
+      outcome: null,
+      winner: null,
+      explanation: null,
+    };
+  }
+
+  const payload = value as Record<string, unknown>;
+  return {
+    outcome: typeof payload.outcome === "string" ? payload.outcome : null,
+    winner: typeof payload.winner === "string" ? payload.winner : null,
+    explanation:
+      typeof payload.explanation === "string" ? payload.explanation : null,
+  };
 }
 
 function buildConversationContextWindow(input: {
@@ -772,6 +938,75 @@ export async function executeDeterministicTurnAttempt(input: {
 
   const shouldTimeout =
     runtimeOptions.timeoutFailureSequences.includes(sequence) && attempt === 1;
+  const modelSelection = selectGeminiModel({
+    role,
+    thinkingProfile,
+  });
+
+  const buildTimeoutFallback = (): SimulatedTurnOutput => {
+    const timeoutMessage = `Turn ${sequence} exceeded timeout budget of ${runtimeOptions.turnTimeoutMs}ms.`;
+    const structured = buildFallbackAgentActOutput({
+      messageType: pickTurnMessageType(
+        candidate.allowedMessageTypes,
+        isLastQueuedTurn,
+      ),
+      summary: `${candidate.sourceAgentName} responded to ${candidate.targetAgentName}. (timeout fallback)`,
+      rationale: `${timeoutMessage} Returned fallback output to keep run progression stable.`,
+      confidence: 0.25,
+    });
+
+    return {
+      engine: "gemini",
+      messageType: structured.messageType,
+      summary: structured.summary,
+      rationale: structured.rationale,
+      confidence: structured.confidence,
+      candidateId: candidate.id,
+      channelId: candidate.channelId,
+      sourceAgentId: candidate.sourceAgentId,
+      targetAgentId: candidate.targetAgentId,
+      mountItemCount: candidate.mountItemCount,
+      prompt: "",
+      model: modelSelection.model,
+      routeReason: `${modelSelection.routeReason}->timeout-fallback`,
+      thinkingLevel: modelSelection.thinkingLevel,
+      latencyMs: runtimeOptions.turnTimeoutMs,
+      tokens: {
+        inputTokens: null,
+        outputTokens: null,
+        totalTokens: null,
+      },
+      schema: structured.schema,
+      payload: structured.payload,
+      validationStatus: "fallback",
+      validationIssues: [
+        {
+          path: "$",
+          code: "TURN_TIMEOUT",
+          message: timeoutMessage,
+        },
+      ],
+      repairSteps: ["timeout-fallback-output"],
+      normalizedOutput: {
+        messageType: structured.messageType,
+        summary: structured.summary,
+        rationale: structured.rationale,
+        confidence: structured.confidence,
+      },
+      requestLog: {
+        prompt: "",
+        model: modelSelection.model,
+        routeReason: `${modelSelection.routeReason}->timeout-fallback`,
+      },
+      responseLog: {
+        rawResponseText: "",
+        source: "fallback",
+        statusCode: null,
+      },
+      artifacts: [],
+      processedAt: new Date().toISOString(),
+    };
+  };
   const executionPromise = new Promise<SimulatedTurnOutput>((resolve, reject) => {
     if (shouldTimeout) {
       setTimeout(() => {
@@ -795,6 +1030,7 @@ export async function executeDeterministicTurnAttempt(input: {
         id: candidate.id,
         sourceAgentName: candidate.sourceAgentName,
         sourceAgentObjective: candidate.sourceAgentObjective,
+        sourceAgentTools: candidate.sourceAgentTools,
         targetAgentName: candidate.targetAgentName,
         targetAgentObjective: candidate.targetAgentObjective,
         stepOrder: candidate.stepOrder,
@@ -841,6 +1077,7 @@ export async function executeDeterministicTurnAttempt(input: {
             source: result.telemetry.source,
             statusCode: result.telemetry.statusCode,
           },
+          artifacts: [],
           processedAt: new Date().toISOString(),
         });
       })
@@ -861,7 +1098,20 @@ export async function executeDeterministicTurnAttempt(input: {
     }, runtimeOptions.turnTimeoutMs);
   });
 
-  const result = await Promise.race([executionPromise, timeoutPromise]);
+  let result: SimulatedTurnOutput;
+  try {
+    result = await Promise.race([executionPromise, timeoutPromise]);
+  } catch (error) {
+    if (
+      error instanceof SchedulerTurnError &&
+      error.code === "TURN_TIMEOUT" &&
+      !shouldTimeout
+    ) {
+      return buildTimeoutFallback();
+    }
+
+    throw error;
+  }
 
   return result;
 }
@@ -908,6 +1158,7 @@ function buildRunState(
   runtimeOptions: SchedulerRuntimeOptions,
   checkpoint: SchedulerCheckpoint,
   plan: CompiledRunPlan,
+  extras?: Record<string, unknown>,
 ): Prisma.InputJsonValue {
   const current = asObjectRecord(runState);
   return toInputJsonValue({
@@ -920,6 +1171,7 @@ function buildRunState(
       issueCount: plan.issues.length,
       turnCandidateCount: plan.turnCandidates.length,
     },
+    ...(extras ?? {}),
   });
 }
 
@@ -991,6 +1243,7 @@ export async function executeRunScheduler(
     where: { id: runId, workspaceId },
     select: {
       id: true,
+      name: true,
       workspaceId: true,
       status: true,
       startedAt: true,
@@ -1266,7 +1519,10 @@ export async function executeRunScheduler(
         agentIds: plan.graph.agents.map((agent) => agent.agentId),
         channelIds: plan.graph.channels.map((channel) => channel.channelId),
       }),
-      state: buildRunState(run.state, runtimeOptions, lastCheckpoint, plan),
+      state: buildRunState(run.state, runtimeOptions, lastCheckpoint, plan, {
+        finalDraft: null,
+        finalDraftTelemetry: null,
+      }),
     },
   });
 
@@ -1561,6 +1817,84 @@ export async function executeRunScheduler(
           deadlock: deadlockSummary,
         };
       }
+      const generatedArtifacts: NonNullable<SimulatedTurnOutput["artifacts"]> = [];
+      if (candidate.sourceAgentTools.imageGenerationEnabled) {
+        try {
+          const imageArtifact = await generateGeminiImageArtifact({
+            runId: run.id,
+            sequence: turn.sequence,
+            runObjective,
+            sourceAgentName: candidate.sourceAgentName,
+            sourceAgentObjective: candidate.sourceAgentObjective,
+            messageSummary: output.summary,
+            messageRationale: output.rationale,
+          });
+
+          if (imageArtifact) {
+            const mimeType = imageArtifact.mimeType.toLowerCase();
+            if (mimeType.startsWith("image/")) {
+              const extension = extensionForMimeType(mimeType);
+              const safeAgentName =
+                candidate.sourceAgentName
+                  .toLowerCase()
+                  .replace(/[^a-z0-9]+/g, "-")
+                  .replace(/^-+|-+$/g, "")
+                  .slice(0, 24) || "agent";
+              const fileName = `run-${run.id.slice(-8)}-t${turn.sequence}-${safeAgentName}${extension}`;
+              const storageKey = createVaultStorageKey(workspaceId, fileName);
+
+              await writeVaultBuffer(storageKey, imageArtifact.bytes);
+              try {
+                const savedArtifact = await db.vaultItem.create({
+                  data: {
+                    workspaceId,
+                    name: `${candidate.sourceAgentName} T${turn.sequence} image`.slice(
+                      0,
+                      80,
+                    ),
+                    fileName,
+                    mimeType,
+                    byteSize: imageArtifact.bytes.byteLength,
+                    storageKey,
+                    tags: ["assets"],
+                    metadata: {
+                      generatedBy: "agent_image_output",
+                      runId: run.id,
+                      turnId: turn.id,
+                      sequence: turn.sequence,
+                      sourceAgentId: candidate.sourceAgentId,
+                      model: imageArtifact.model,
+                    },
+                  },
+                  select: {
+                    id: true,
+                    name: true,
+                    fileName: true,
+                    mimeType: true,
+                    byteSize: true,
+                  },
+                });
+
+                generatedArtifacts.push({
+                  kind: "image",
+                  vaultItemId: savedArtifact.id,
+                  name: savedArtifact.name,
+                  fileName: savedArtifact.fileName,
+                  mimeType: savedArtifact.mimeType,
+                  byteSize: savedArtifact.byteSize,
+                  model: imageArtifact.model,
+                });
+              } catch (error) {
+                await deleteVaultBuffer(storageKey);
+                throw error;
+              }
+            }
+          }
+        } catch {
+          // Keep scheduler turns resilient: artifact generation should not block core execution.
+        }
+      }
+
       const toolCalls = buildDefaultToolCallsForTurn({
         channelId: candidate.channelId,
         sequence: turn.sequence,
@@ -1662,6 +1996,7 @@ export async function executeRunScheduler(
 
       const persistedOutput: SimulatedTurnOutput = {
         ...output,
+        artifacts: generatedArtifacts,
         governance,
         consensus: {
           ...effectiveConsensusProgress,
@@ -1990,7 +2325,92 @@ export async function executeRunScheduler(
         ? `Run completed after decision.${voteFinalizationNote}`
         : deadlockResolved
           ? `Run completed after deadlock mediation.${voteFinalizationNote}`
-          : `Run completed after exhausting queued turns.${voteFinalizationNote}`,
+      : `Run completed after exhausting queued turns.${voteFinalizationNote}`,
+  });
+
+  const [settledTurns, latestVote, openVoteCount] = await Promise.all([
+    db.turn.findMany({
+      where: {
+        runId: run.id,
+        status: {
+          in: [TurnStatus.COMPLETED, TurnStatus.SKIPPED, TurnStatus.BLOCKED],
+        },
+      },
+      orderBy: { sequence: "asc" },
+      select: {
+        sequence: true,
+        status: true,
+        startedAt: true,
+        endedAt: true,
+        output: true,
+        actorAgent: {
+          select: {
+            name: true,
+          },
+        },
+        channel: {
+          select: {
+            name: true,
+          },
+        },
+      },
+      take: 160,
+    }),
+    db.vote.findFirst({
+      where: {
+        runId: run.id,
+      },
+      orderBy: [{ updatedAt: "desc" }, { openedAt: "desc" }],
+      select: {
+        status: true,
+        result: true,
+      },
+    }),
+    db.vote.count({
+      where: {
+        runId: run.id,
+        status: VoteStatus.OPEN,
+      },
+    }),
+  ]);
+
+  const latestVoteResult = parseVoteResult(latestVote?.result ?? null);
+  const draftResult = await synthesizeGeminiFinalDraft({
+    runName: run.name,
+    runObjective,
+    runStatus: blockedTurns > 0 ? "BLOCKED" : RunStatus.COMPLETED,
+    updatedAt: new Date().toISOString(),
+    turns: settledTurns.map((turn) => ({
+      sequence: turn.sequence,
+      status: turn.status,
+      actorName: turn.actorAgent?.name ?? "Unknown actor",
+      channelName: turn.channel?.name ?? "Unknown channel",
+      messageType: parseOutputMessageType(turn.output),
+      summary: parseOutputSummary(turn.output),
+      rationale: parseOutputRationale(turn.output),
+      payload: parseOutputPayload(turn.output),
+      artifacts: parseOutputArtifacts(turn.output),
+      endedAt: turn.endedAt ? turn.endedAt.toISOString() : null,
+      startedAt: turn.startedAt ? turn.startedAt.toISOString() : null,
+    })),
+    vote: latestVote
+      ? {
+          status: latestVote.status,
+          outcome: latestVoteResult.outcome,
+          winner: latestVoteResult.winner,
+          explanation: latestVoteResult.explanation,
+          openCount: openVoteCount,
+        }
+      : null,
+    deadlock:
+      deadlockSummary.status !== "none"
+        ? {
+            status: deadlockSummary.status,
+            action: deadlockSummary.action,
+            note: deadlockSummary.note,
+            signals: deadlockSummary.signals,
+          }
+        : null,
   });
 
   await db.run.update({
@@ -1998,7 +2418,19 @@ export async function executeRunScheduler(
     data: {
       status: blockedTurns > 0 ? RunStatus.BLOCKED : RunStatus.COMPLETED,
       endedAt: new Date(),
-      state: buildRunState(run.state, runtimeOptions, lastCheckpoint, plan),
+      state: buildRunState(run.state, runtimeOptions, lastCheckpoint, plan, {
+        finalDraft: draftResult.draft,
+        finalDraftTelemetry: {
+          source: draftResult.telemetry.source,
+          model: draftResult.telemetry.model,
+          routeReason: draftResult.telemetry.routeReason,
+          thinkingLevel: draftResult.telemetry.thinkingLevel,
+          latencyMs: draftResult.telemetry.latencyMs,
+          statusCode: draftResult.telemetry.statusCode,
+          tokenUsage: draftResult.telemetry.tokenUsage,
+          generatedAt: new Date().toISOString(),
+        },
+      }),
     },
   });
 

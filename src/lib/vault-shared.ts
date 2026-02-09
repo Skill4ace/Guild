@@ -15,6 +15,10 @@ export const VAULT_ACCEPTED_EXTENSIONS = [
   ".jpeg",
   ".webp",
   ".svg",
+  ".gif",
+  ".mp4",
+  ".mov",
+  ".webm",
 ] as const;
 
 export const VAULT_ACCEPTED_FILE_HINT = VAULT_ACCEPTED_EXTENSIONS.join(", ");

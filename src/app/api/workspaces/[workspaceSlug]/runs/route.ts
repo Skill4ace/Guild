@@ -200,6 +200,128 @@ function parseRunProvenance(value: unknown): {
   };
 }
 
+function parseFinalDraft(value: unknown): {
+  version: number;
+  synthesisSource: "model" | "deterministic";
+  statusLabel: string;
+  recommendation: string;
+  summary: string;
+  updatedAt: string | null;
+  generatedAt: string;
+  sourceTurnCount: number;
+  sections: Array<{
+    id: string;
+    title: string;
+    status: "pending" | "building" | "ready";
+    lines: string[];
+    sourceSequences: number[];
+  }>;
+  markdown: string;
+} | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const payload = value as Record<string, unknown>;
+  const recommendation =
+    typeof payload.recommendation === "string"
+      ? payload.recommendation.trim().slice(0, 1200)
+      : null;
+  const statusLabel =
+    typeof payload.statusLabel === "string"
+      ? payload.statusLabel.trim().slice(0, 160)
+      : null;
+  const generatedAt =
+    typeof payload.generatedAt === "string" ? payload.generatedAt : null;
+
+  if (!recommendation || !statusLabel || !generatedAt) {
+    return null;
+  }
+
+  const rawSections = Array.isArray(payload.sections) ? payload.sections : [];
+  const sections = rawSections
+    .map((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        return null;
+      }
+
+      const section = entry as Record<string, unknown>;
+      const id = typeof section.id === "string" ? section.id.trim().slice(0, 48) : null;
+      const title =
+        typeof section.title === "string" ? section.title.trim().slice(0, 80) : null;
+      const status =
+        section.status === "pending" ||
+        section.status === "building" ||
+        section.status === "ready"
+          ? section.status
+          : "building";
+      const lines = Array.isArray(section.lines)
+        ? section.lines
+            .filter((line): line is string => typeof line === "string")
+            .map((line) => line.trim())
+            .filter((line) => line.length > 0)
+            .slice(0, 12)
+        : [];
+      const sourceSequences = Array.isArray(section.sourceSequences)
+        ? section.sourceSequences
+            .filter(
+              (sequence): sequence is number =>
+                typeof sequence === "number" &&
+                Number.isFinite(sequence) &&
+                sequence > 0,
+            )
+            .map((sequence) => Math.round(sequence))
+            .slice(0, 20)
+        : [];
+
+      if (!id || !title) {
+        return null;
+      }
+
+      return {
+        id,
+        title,
+        status,
+        lines,
+        sourceSequences,
+      };
+    })
+    .filter(
+      (
+        section,
+      ): section is {
+        id: string;
+        title: string;
+        status: "pending" | "building" | "ready";
+        lines: string[];
+        sourceSequences: number[];
+      } => section !== null,
+    );
+
+  return {
+    version:
+      typeof payload.version === "number" && Number.isFinite(payload.version)
+        ? Math.max(1, Math.round(payload.version))
+        : 1,
+    synthesisSource:
+      payload.synthesisSource === "model" ? "model" : "deterministic",
+    statusLabel,
+    recommendation,
+    summary:
+      typeof payload.summary === "string" ? payload.summary.trim().slice(0, 2400) : "",
+    updatedAt: typeof payload.updatedAt === "string" ? payload.updatedAt : null,
+    generatedAt,
+    sourceTurnCount:
+      typeof payload.sourceTurnCount === "number" &&
+      Number.isFinite(payload.sourceTurnCount)
+        ? Math.max(0, Math.round(payload.sourceTurnCount))
+        : 0,
+    sections,
+    markdown:
+      typeof payload.markdown === "string" ? payload.markdown.slice(0, 40_000) : "",
+  };
+}
+
 function parseTurnOutput(value: unknown): {
   model: string | null;
   routeReason: string | null;
@@ -255,6 +377,15 @@ function parseTurnOutput(value: unknown): {
     action: string | null;
     note: string | null;
   };
+  artifacts: Array<{
+    kind: string;
+    vaultItemId: string;
+    name: string;
+    fileName: string;
+    mimeType: string;
+    byteSize: number;
+    model: string | null;
+  }>;
 } {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {
@@ -307,6 +438,7 @@ function parseTurnOutput(value: unknown): {
         action: null,
         note: null,
       },
+      artifacts: [],
     };
   }
 
@@ -412,6 +544,56 @@ function parseTurnOutput(value: unknown): {
   const deadlockSignals = Array.isArray(deadlockPayload.signals)
     ? deadlockPayload.signals
         .filter((entry): entry is string => typeof entry === "string")
+        .slice(0, 6)
+    : [];
+  const artifacts = Array.isArray(payload.artifacts)
+    ? payload.artifacts
+        .map((entry) => {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+            return null;
+          }
+
+          const item = entry as Record<string, unknown>;
+          const vaultItemId =
+            typeof item.vaultItemId === "string" ? item.vaultItemId : null;
+          const name = typeof item.name === "string" ? item.name : null;
+          const fileName = typeof item.fileName === "string" ? item.fileName : null;
+          const mimeType = typeof item.mimeType === "string" ? item.mimeType : null;
+          const byteSize = typeof item.byteSize === "number" ? item.byteSize : null;
+
+          if (
+            !vaultItemId ||
+            !name ||
+            !fileName ||
+            !mimeType ||
+            byteSize === null
+          ) {
+            return null;
+          }
+
+          return {
+            kind: typeof item.kind === "string" ? item.kind : "asset",
+            vaultItemId,
+            name,
+            fileName,
+            mimeType,
+            byteSize,
+            model: typeof item.model === "string" ? item.model : null,
+          };
+        })
+        .filter(
+          (
+            entry,
+          ): entry is {
+            kind: string;
+            vaultItemId: string;
+            name: string;
+            fileName: string;
+            mimeType: string;
+            byteSize: number;
+            model: string | null;
+          } => entry !== null,
+        )
         .slice(0, 6)
     : [];
 
@@ -535,6 +717,7 @@ function parseTurnOutput(value: unknown): {
           ? deadlockPayload.note
           : null,
     },
+    artifacts,
   };
 }
 
@@ -710,6 +893,7 @@ export async function GET(request: Request, context: RouteContext) {
           createdAt: run.createdAt,
           updatedAt: run.updatedAt,
           checkpoint,
+          finalDraft: parseFinalDraft(state.finalDraft),
           provenance,
           counts,
           votes: {

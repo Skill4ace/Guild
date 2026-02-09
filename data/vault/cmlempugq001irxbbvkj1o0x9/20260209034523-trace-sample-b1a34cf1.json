@@ -1,0 +1,16 @@
+{
+  "spans": [
+    {
+      "name": "db.query",
+      "durationMs": 740
+    },
+    {
+      "name": "gemini.request",
+      "durationMs": 3200
+    },
+    {
+      "name": "scheduler.persist",
+      "durationMs": 180
+    }
+  ]
+}

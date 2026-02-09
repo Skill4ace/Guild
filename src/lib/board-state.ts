@@ -9,6 +9,12 @@ export type AgentRole =
 
 export type AgentThinkingProfile = "fast" | "standard" | "deep";
 
+export type AgentToolingConfig = {
+  googleSearchEnabled: boolean;
+  codeExecutionEnabled: boolean;
+  imageGenerationEnabled: boolean;
+};
+
 export const CHANNEL_MESSAGE_TYPE_ORDER = [
   "proposal",
   "critique",
@@ -31,6 +37,27 @@ export const AGENT_THINKING_PROFILE_ORDER: AgentThinkingProfile[] = [
   "standard",
   "deep",
 ];
+
+export const AGENT_TOOLING_META = {
+  googleSearchEnabled: {
+    label: "Google Search",
+    summary: "Allow grounded web search during this agent turn.",
+  },
+  codeExecutionEnabled: {
+    label: "Code Execution",
+    summary: "Allow Python code execution for calculations and analysis.",
+  },
+  imageGenerationEnabled: {
+    label: "Image Output",
+    summary: "Generate an image artifact from this agent turn.",
+  },
+} as const;
+
+export const DEFAULT_AGENT_TOOLING: AgentToolingConfig = {
+  googleSearchEnabled: false,
+  codeExecutionEnabled: false,
+  imageGenerationEnabled: false,
+};
 
 export const AGENT_THINKING_PROFILE_META: Record<
   AgentThinkingProfile,
@@ -134,6 +161,7 @@ export type AgentNodeData = {
   authorityWeight: number;
   thinkingProfile: AgentThinkingProfile;
   privateMemoryEnabled: boolean;
+  tools: AgentToolingConfig;
 };
 
 export type ChannelEdgeData = {
@@ -208,6 +236,28 @@ function parseThinkingProfile(
   }
 
   return AGENT_ROLE_META[role].defaultThinkingProfile;
+}
+
+function parseAgentTooling(value: unknown): AgentToolingConfig {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { ...DEFAULT_AGENT_TOOLING };
+  }
+
+  const payload = value as Record<string, unknown>;
+  return {
+    googleSearchEnabled:
+      typeof payload.googleSearchEnabled === "boolean"
+        ? payload.googleSearchEnabled
+        : false,
+    codeExecutionEnabled:
+      typeof payload.codeExecutionEnabled === "boolean"
+        ? payload.codeExecutionEnabled
+        : false,
+    imageGenerationEnabled:
+      typeof payload.imageGenerationEnabled === "boolean"
+        ? payload.imageGenerationEnabled
+        : false,
+  };
 }
 
 function parseVisibility(value: unknown): "public" | "private" {
@@ -351,6 +401,7 @@ export function createDefaultAgentNodeData(
     authorityWeight: meta.defaultAuthorityWeight,
     thinkingProfile: meta.defaultThinkingProfile,
     privateMemoryEnabled: meta.defaultPrivateMemoryEnabled,
+    tools: { ...DEFAULT_AGENT_TOOLING },
   };
 }
 
@@ -372,6 +423,7 @@ export function sanitizeAgentNodeData(value: unknown): AgentNodeData {
       typeof data.privateMemoryEnabled === "boolean"
         ? data.privateMemoryEnabled
         : defaults.privateMemoryEnabled,
+    tools: parseAgentTooling(data.tools),
   };
 }
 

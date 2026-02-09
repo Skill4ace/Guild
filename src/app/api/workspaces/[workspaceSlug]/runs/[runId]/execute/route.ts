@@ -152,6 +152,7 @@ export async function POST(request: Request, context: RouteContext) {
           authorityWeight: true,
           thinkingProfile: true,
           privateMemoryEnabled: true,
+          metadata: true,
           persona: true,
           constraints: true,
           updatedAt: true,

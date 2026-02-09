@@ -1,78 +1,78 @@
 # Guild
 
-Guild is a web studio for designing and running governed multi-agent workflows.
+Guild is a web studio for building governed multi-agent workflows.
+Instead of one long prompt, you define agents, channels, rules, and run execution with replay.
 
-## What You Build
+## Use Cases
 
-- `Board`: define agents, connect channels, and set step order.
-- `Vault`: upload context files and mount them to agents/channels/runs.
-- `Runs`: compile board -> execute turns -> replay timeline -> inspect final output.
-- `Templates`: launch Debate, Org, Game, or Build scaffold quickly.
+- Product decisions: run side-vs-side arguments and finalize a governed ship/no-ship call.
+- Incident response: coordinate triage, risk analysis, and release decisions across role tiers.
+- Marketing strategy: route campaign planning across specialist agents and synthesize final output.
+- Research and policy review: combine multiple agent positions, critiques, and evidence into one draft.
+
+## Key Features
+
+- `Board`: visual graph of agents + channels with step order, ACL, and message-type constraints.
+- `Vault`: upload files and mount them by scope (`AGENT`, `CHANNEL`, `RUN`).
+- `Runs`: compile board into turn candidates, execute scheduler, replay turns, inspect final draft.
+- `Governance`: approval/veto/escalation policies, vote calls, and deadlock mediation.
+- `Templates`: quick launch of `Debate`, `Org`, `Game`, and `Build`.
+- `Auto workspace setup`: infer a starter board from your goal (template or custom hub-and-spoke).
+
+## Architecture (Short Version)
+
+- **Frontend**: Next.js App Router + React + React Flow.
+- **API**: Next route handlers under `src/app/api/...`.
+- **Domain engine** (`src/lib`):
+  - board schema + sanitization
+  - board -> runtime projection (agents/channels)
+  - run compiler
+  - run scheduler
+  - governance + voting + tool gateway
+  - Gemini client (turn execution + final draft synthesis + image artifacts)
+- **Data**: PostgreSQL via Prisma (`Workspace`, `BoardState`, `Agent`, `Channel`, `Run`, `Turn`, `Vote`, `Policy`, `VaultItem`, `Mount`).
+- **File storage**: local filesystem by default (`data/vault`), configurable via `VAULT_STORAGE_DIR`.
 
 ## Quick Start
-
-1. Install dependencies and env file:
 
 ```bash
 npm install
 cp .env.example .env.local
-```
 
-2. Start Postgres and apply schema:
-
-```bash
 npm run db:up
 npm run db:migrate:deploy
 npm run db:seed
-```
 
-3. Start the app:
-
-```bash
 npm run dev
 ```
 
-4. Open:
+Open `http://localhost:3000/login`, sign in, create a workspace, then use `Board`, `Vault`, and `Runs`.
 
-- `http://localhost:3000/login`
-- sign in
-- create a workspace
-- open Board/Vault/Runs/Templates from the workspace shell
+## Core Run Flow
 
-## Core Workflow
+1. Build graph on `Board` (mission, agents, channels, step order).
+2. Optionally mount context files in `Vault`.
+3. Create run in `Runs`.
+4. Execute run.
+5. Review turn timeline + final draft.
 
-1. Board
-- set one mission
-- add agents with role + task
-- connect channels and set message types
-- set channel step order for execution sequence
+## Environment Variables
 
-2. Vault (optional)
-- upload files
-- create mounts so only relevant agents/channels/runs can read context
+Required:
 
-3. Runs
-- create a draft run
-- execute scheduler
-- use Timeline Replay to inspect each turn
-- read Final Output (prefers final `decision` turn when present)
+- `DATABASE_URL`
+- `GEMINI_API_KEY`
 
-4. Templates
-- launch a template to replace board scaffold and create a ready draft run
-
-## Required Env Vars
-
-- `DATABASE_URL`: Postgres connection string
-- `GEMINI_API_KEY`: Gemini API key for live model calls
-
-Optional:
+Common optional:
 
 - `GEMINI_MODEL_FLASH` (default: `gemini-3-flash-preview`)
 - `GEMINI_MODEL_PRO` (default: `gemini-3-pro-preview`)
-- `GEMINI_FLASH_ONLY` (`true`/`false`)
-- `VAULT_STORAGE_DIR` (default local storage path for Vault files)
+- `GEMINI_MODEL_IMAGE` (default: `gemini-3-pro-image-preview`)
+- `GEMINI_FLASH_ONLY`
+- `GEMINI_MODEL_ROUTING`
+- `VAULT_STORAGE_DIR`
 
-## Useful Scripts
+## Useful Commands
 
 ```bash
 npm run db:up
@@ -84,14 +84,3 @@ npm run test
 npm run lint
 npm run build
 ```
-
-## Troubleshooting
-
-- `unknown shorthand flag: 'd' in -d`
-  - Docker Compose is not available yet. Install/launch Docker Desktop, then re-run `npm run db:up`.
-
-- `P1001: Can't reach database server`
-  - Postgres is not running. Run `npm run db:up`, then check `npm run db:logs`.
-
-- Next.js lock error (`.next/dev/lock`)
-  - Another dev server is running. Stop it and restart `npm run dev`.

@@ -1,6 +1,6 @@
 import Image from "next/image";
 
-import guildLogo from "../../assets/Guild_logo_badge.svg";
+import guildLogo from "../../assets/faviconguild.png";
 
 type GuildLogoBadgeProps = {
   className?: string;
@@ -20,7 +20,7 @@ export function GuildLogoBadge({
         alt="Guild logo"
         fill
         priority={priority}
-        className="object-contain p-1"
+        className="object-cover"
       />
     </span>
   );

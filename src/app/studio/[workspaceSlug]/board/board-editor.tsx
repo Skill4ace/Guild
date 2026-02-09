@@ -27,6 +27,7 @@ import {
   AGENT_ROLE_ORDER,
   CHANNEL_MESSAGE_TYPE_META,
   CHANNEL_MESSAGE_TYPE_ORDER,
+  AGENT_TOOLING_META,
   AGENT_THINKING_PROFILE_META,
   AGENT_THINKING_PROFILE_ORDER,
   DEFAULT_BOARD_OBJECTIVE,
@@ -696,6 +697,33 @@ export function BoardEditor({ workspaceSlug }: BoardEditorProps) {
     markDirty();
   }
 
+  function updateSelectedNodeTool(
+    field: keyof AgentNodeData["tools"],
+    value: boolean,
+  ) {
+    if (!selectedNode) {
+      return;
+    }
+
+    setNodes((current) =>
+      current.map((node) =>
+        node.id === selectedNode.id
+          ? {
+              ...node,
+              data: {
+                ...node.data,
+                tools: {
+                  ...node.data.tools,
+                  [field]: value,
+                },
+              },
+            }
+          : node,
+      ),
+    );
+    markDirty();
+  }
+
   function updateSelectedNodeConstraints(value: string) {
     if (!selectedNode) {
       return;
@@ -925,7 +953,7 @@ export function BoardEditor({ workspaceSlug }: BoardEditorProps) {
           />
         </section>
 
-        <div className="h-[78vh] min-h-[560px] overflow-hidden rounded-2xl border border-slate-200 bg-white">
+        <div className="mt-2 h-[78vh] min-h-[560px] overflow-hidden rounded-2xl border border-slate-200 bg-white">
           {saveStatus === "loading" ? (
             <div className="flex h-full items-center justify-center text-sm text-slate-500">
               Loading board...
@@ -1147,6 +1175,43 @@ export function BoardEditor({ workspaceSlug }: BoardEditorProps) {
                   Only this agent can use private notes
                 </span>
               </label>
+              <fieldset>
+                <span className="text-xs font-medium text-slate-600">
+                  Agent tools
+                </span>
+                <div className="mt-2 space-y-2">
+                  {(Object.keys(AGENT_TOOLING_META) as Array<
+                    keyof AgentNodeData["tools"]
+                  >).map((toolKey) => {
+                    const meta = AGENT_TOOLING_META[toolKey];
+                    const checked = selectedNode.data.tools[toolKey];
+
+                    return (
+                      <label
+                        key={toolKey}
+                        className="flex cursor-pointer items-start gap-2 rounded-lg border border-slate-200 px-2.5 py-2"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) =>
+                            updateSelectedNodeTool(toolKey, event.target.checked)
+                          }
+                          className="mt-0.5 h-4 w-4 accent-slate-900"
+                        />
+                        <span>
+                          <span className="block text-xs font-semibold text-slate-900">
+                            {meta.label}
+                          </span>
+                          <span className="block text-[11px] text-slate-500">
+                            {meta.summary}
+                          </span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </fieldset>
               <label className="block">
                 <span className="text-xs font-medium text-slate-600">Agent task</span>
                 <textarea

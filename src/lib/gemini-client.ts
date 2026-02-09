@@ -1,6 +1,13 @@
 import type { ChannelMessageType } from "./board-state";
+import type { AgentToolingConfig } from "./board-state";
 import type { AgentThinkingProfile } from "./board-state";
 import type { AgentRole } from "./board-state";
+import {
+  buildDeterministicFinalDraft,
+  normalizeFinalDraftFromModel,
+  type FinalDraftInput,
+  type RunFinalDraftDocument,
+} from "./final-draft";
 import {
   AGENT_ACT_SCHEMA_ID,
   buildFallbackAgentActOutput,
@@ -14,6 +21,7 @@ export { pickDefaultMessageType } from "./structured-output";
 
 export const DEFAULT_GEMINI_FLASH_MODEL = "gemini-3-flash-preview";
 export const DEFAULT_GEMINI_PRO_MODEL = "gemini-3-pro-preview";
+export const DEFAULT_GEMINI_IMAGE_MODEL = "gemini-3-pro-image-preview";
 
 export type GeminiModelSelection = {
   model: string;
@@ -78,6 +86,13 @@ export type GeminiTurnExecutionResult = {
   rawResponse: unknown;
 };
 
+export type GeminiFinalDraftSynthesisResult = {
+  draft: RunFinalDraftDocument;
+  telemetry: GeminiTurnTelemetry;
+  rawResponseText: string;
+  rawResponse: unknown;
+};
+
 export class GeminiApiError extends Error {
   retryable: boolean;
   statusCode: number | null;
@@ -93,7 +108,17 @@ export class GeminiApiError extends Error {
 type GeminiGenerateContentResponse = {
   candidates?: Array<{
     content?: {
-      parts?: Array<{ text?: string }>;
+      parts?: Array<{
+        text?: string;
+        inlineData?: {
+          mimeType?: string;
+          data?: string;
+        };
+        inline_data?: {
+          mime_type?: string;
+          data?: string;
+        };
+      }>;
     };
   }>;
   usageMetadata?: {
@@ -111,6 +136,7 @@ type ExecuteGeminiTurnInput = {
     id: string;
     sourceAgentName: string;
     sourceAgentObjective: string;
+    sourceAgentTools: AgentToolingConfig;
     targetAgentName: string;
     targetAgentObjective: string;
     stepOrder?: number | null;
@@ -131,6 +157,16 @@ type GeminiRequestResult = {
   latencyMs: number;
 };
 
+export type GeminiImageArtifactResult = {
+  model: string;
+  prompt: string;
+  mimeType: string;
+  bytes: Uint8Array;
+  latencyMs: number;
+  requestId: string | null;
+  statusCode: number | null;
+};
+
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
 let nextGeminiRequestAtMs = 0;
 let lastGeminiRequestAtMs = 0;
@@ -145,6 +181,13 @@ function configuredFlashModel(): string {
 function configuredProModel(): string {
   const configured = process.env.GEMINI_MODEL_PRO?.trim();
   return configured && configured.length > 0 ? configured : DEFAULT_GEMINI_PRO_MODEL;
+}
+
+function configuredImageModel(): string {
+  const configured = process.env.GEMINI_MODEL_IMAGE?.trim();
+  return configured && configured.length > 0
+    ? configured
+    : DEFAULT_GEMINI_IMAGE_MODEL;
 }
 
 function configuredHttpMaxAttempts(): number {
@@ -325,6 +368,12 @@ function buildGeminiPrompt(input: ExecuteGeminiTurnInput): string {
     context.involvementRecent.length > 0
       ? context.involvementRecent.map(formatEntry)
       : ["(none)"];
+  const enabledTools = [
+    input.candidate.sourceAgentTools.googleSearchEnabled ? "google_search" : null,
+    input.candidate.sourceAgentTools.codeExecutionEnabled ? "code_execution" : null,
+  ].filter((entry): entry is string => entry !== null);
+  const enabledToolsLabel =
+    enabledTools.length > 0 ? enabledTools.join(", ") : "none";
 
   return [
     "You are a Guild multi-agent runtime worker.",
@@ -337,6 +386,7 @@ function buildGeminiPrompt(input: ExecuteGeminiTurnInput): string {
     `Target agent task: ${targetObjective}`,
     `Channel step order: ${stepOrderNote}`,
     `Allowed message types: ${allowedMessageTypes}`,
+    `Enabled Gemini built-in tools: ${enabledToolsLabel}`,
     `Mounted context item count: ${input.candidate.mountItemCount}`,
     "Recent conversation context:",
     "Global recent turns:",
@@ -349,6 +399,22 @@ function buildGeminiPrompt(input: ExecuteGeminiTurnInput): string {
     '{"messageType":"proposal|critique|vote_call|decision","summary":"string","rationale":"string","confidence":0.0}',
     "Do not include markdown fences.",
   ].join("\n");
+}
+
+function buildGeminiBuiltInTools(
+  tooling: AgentToolingConfig,
+): Array<Record<string, Record<string, never>>> {
+  const tools: Array<Record<string, Record<string, never>>> = [];
+
+  if (tooling.googleSearchEnabled) {
+    tools.push({ google_search: {} });
+  }
+
+  if (tooling.codeExecutionEnabled) {
+    tools.push({ code_execution: {} });
+  }
+
+  return tools;
 }
 
 function buildFallbackResult(input: {
@@ -424,6 +490,44 @@ function parsePrimaryText(payload: GeminiGenerateContentResponse): string {
     (entry) => typeof entry.text === "string" && entry.text.trim().length > 0,
   );
   return part?.text?.trim() ?? "";
+}
+
+function parsePrimaryInlineImage(payload: GeminiGenerateContentResponse): {
+  mimeType: string;
+  data: string;
+} | null {
+  const candidate = payload.candidates?.[0];
+  const parts = candidate?.content?.parts ?? [];
+
+  for (const part of parts) {
+    const camel = part.inlineData;
+    if (
+      camel &&
+      typeof camel.mimeType === "string" &&
+      typeof camel.data === "string" &&
+      camel.data.length > 0
+    ) {
+      return {
+        mimeType: camel.mimeType,
+        data: camel.data,
+      };
+    }
+
+    const snake = part.inline_data;
+    if (
+      snake &&
+      typeof snake.mime_type === "string" &&
+      typeof snake.data === "string" &&
+      snake.data.length > 0
+    ) {
+      return {
+        mimeType: snake.mime_type,
+        data: snake.data,
+      };
+    }
+  }
+
+  return null;
 }
 
 function isRetryableStatus(statusCode: number): boolean {
@@ -528,6 +632,7 @@ async function requestGeminiGenerateContent(input: {
   apiKey: string;
   prompt: string;
   thinkingLevel: GeminiThinkingLevel;
+  builtInTools: Array<Record<string, Record<string, never>>>;
 }): Promise<GeminiRequestResult> {
   const startedAt = Date.now();
   let response: Response;
@@ -547,6 +652,11 @@ async function requestGeminiGenerateContent(input: {
               parts: [{ text: input.prompt }],
             },
           ],
+          ...(input.builtInTools.length > 0
+            ? {
+                tools: input.builtInTools,
+              }
+            : {}),
           generationConfig: {
             temperature: 1.0,
             responseMimeType: "application/json",
@@ -588,6 +698,7 @@ async function requestGeminiGenerateContentWithRetry(input: {
   apiKey: string;
   prompt: string;
   thinkingLevel: GeminiThinkingLevel;
+  builtInTools: Array<Record<string, Record<string, never>>>;
 }): Promise<GeminiRequestResult> {
   const maxAttempts = configuredHttpMaxAttempts();
   let lastError: GeminiApiError | null = null;
@@ -642,6 +753,379 @@ async function requestGeminiGenerateContentWithRetry(input: {
   throw new GeminiApiError("Gemini request exhausted retries.", true, null);
 }
 
+async function requestGeminiImageGenerateContent(input: {
+  model: string;
+  apiKey: string;
+  prompt: string;
+}): Promise<GeminiRequestResult> {
+  const startedAt = Date.now();
+  let response: Response;
+
+  try {
+    response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${input.model}:generateContent?key=${encodeURIComponent(input.apiKey)}`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: input.prompt }],
+            },
+          ],
+          generationConfig: {
+            temperature: 1.0,
+          },
+        }),
+      },
+    );
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Network error calling Gemini API.";
+    throw new GeminiApiError(
+      `Gemini image network failure using ${input.model}: ${message}`,
+      true,
+      null,
+    );
+  }
+
+  const textBody = await response.text();
+  let parsedBody: GeminiGenerateContentResponse = {};
+  try {
+    parsedBody = JSON.parse(textBody) as GeminiGenerateContentResponse;
+  } catch {
+    parsedBody = {};
+  }
+
+  return {
+    response,
+    textBody,
+    parsedBody,
+    latencyMs: Date.now() - startedAt,
+  };
+}
+
+async function requestGeminiImageGenerateContentWithRetry(input: {
+  model: string;
+  apiKey: string;
+  prompt: string;
+}): Promise<GeminiRequestResult> {
+  const maxAttempts = configuredHttpMaxAttempts();
+  let lastError: GeminiApiError | null = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    await waitForGeminiWindow();
+    await waitForMinRequestInterval();
+
+    try {
+      const result = await requestGeminiImageGenerateContent(input);
+      lastGeminiRequestAtMs = Date.now();
+      const statusCode = result.response.status;
+      const retryAfterMs =
+        parseRetryAfterMs(result.response.headers.get("retry-after")) ??
+        parseRetryDelayFromBody(result.textBody);
+      const hardQuota = statusCode === 429 && isHardQuotaExhausted(result.textBody);
+      const canRetry =
+        !result.response.ok &&
+        isRetryableStatus(statusCode) &&
+        !hardQuota &&
+        attempt < maxAttempts;
+
+      if (canRetry) {
+        const delayMs = computeRetryDelayMs({ attempt, retryAfterMs });
+        reserveNextGeminiWindow(delayMs);
+        await sleep(delayMs);
+        continue;
+      }
+
+      return result;
+    } catch (error) {
+      if (
+        error instanceof GeminiApiError &&
+        error.retryable &&
+        attempt < maxAttempts
+      ) {
+        lastError = error;
+        const delayMs = computeRetryDelayMs({ attempt, retryAfterMs: null });
+        reserveNextGeminiWindow(delayMs);
+        await sleep(delayMs);
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+
+  throw new GeminiApiError("Gemini image request exhausted retries.", true, null);
+}
+
+export async function generateGeminiImageArtifact(input: {
+  runId: string;
+  sequence: number;
+  runObjective: string;
+  sourceAgentName: string;
+  sourceAgentObjective: string;
+  messageSummary: string;
+  messageRationale: string;
+  apiKey?: string | null;
+}): Promise<GeminiImageArtifactResult | null> {
+  const resolvedApiKey = (input.apiKey ?? process.env.GEMINI_API_KEY)?.trim() || "";
+  if (!resolvedApiKey) {
+    return null;
+  }
+
+  const model = configuredImageModel();
+  const prompt = [
+    "Create one clean image artifact summarizing this agent turn.",
+    `Run id: ${input.runId}`,
+    `Turn sequence: ${input.sequence}`,
+    `Run objective: ${input.runObjective.trim() || "No run objective."}`,
+    `Agent: ${input.sourceAgentName}`,
+    `Agent task: ${input.sourceAgentObjective.trim() || "No task set."}`,
+    `Turn summary: ${input.messageSummary}`,
+    `Turn rationale: ${input.messageRationale}`,
+    "Output image only.",
+  ].join("\n");
+
+  const result = await requestGeminiImageGenerateContentWithRetry({
+    model,
+    apiKey: resolvedApiKey,
+    prompt,
+  });
+
+  if (!result.response.ok) {
+    return null;
+  }
+
+  const inline = parsePrimaryInlineImage(result.parsedBody);
+  if (!inline) {
+    return null;
+  }
+
+  const bytes = Uint8Array.from(Buffer.from(inline.data, "base64"));
+  if (bytes.byteLength === 0) {
+    return null;
+  }
+
+  return {
+    model,
+    prompt,
+    mimeType: inline.mimeType,
+    bytes,
+    latencyMs: result.latencyMs,
+    requestId: result.response.headers.get("x-request-id"),
+    statusCode: result.response.status,
+  };
+}
+
+function buildGeminiFinalDraftPrompt(input: FinalDraftInput): string {
+  const runName = input.runName?.trim() || "Untitled run";
+  const runObjective = input.runObjective.trim() || "No mission was set.";
+  const turnLines = input.turns
+    .slice(0, 120)
+    .map((turn) => {
+      const summary = (turn.summary || "No summary")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 360);
+      const rationale = (turn.rationale || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 260);
+      const artifactNote =
+        turn.artifacts.length > 0
+          ? ` artifacts: ${turn.artifacts.map((artifact) => artifact.name).join(", ")}.`
+          : "";
+      const rationaleNote = rationale.length > 0 ? ` rationale: ${rationale}.` : "";
+      return `T${turn.sequence} ${turn.status} ${turn.actorName} -> ${turn.channelName} [${turn.messageType ?? "event"}] ${summary}.${rationaleNote}${artifactNote}`;
+    });
+  const voteNote = input.vote
+    ? [
+        `status=${input.vote.status ?? "n/a"}`,
+        `outcome=${input.vote.outcome ?? "n/a"}`,
+        `winner=${input.vote.winner ?? "n/a"}`,
+        `open=${input.vote.openCount}`,
+        input.vote.explanation ? `explanation=${input.vote.explanation}` : null,
+      ]
+        .filter((entry): entry is string => entry !== null)
+        .join(" | ")
+    : "none";
+  const deadlockNote =
+    input.deadlock && input.deadlock.status !== "none"
+      ? `status=${input.deadlock.status} action=${input.deadlock.action ?? "n/a"} note=${input.deadlock.note ?? "n/a"}`
+      : "none";
+
+  return [
+    "You are the final drafting engine for Guild.",
+    "Create a comprehensive final deliverable from the completed multi-agent run.",
+    `Run: ${runName}`,
+    `Run status: ${input.runStatus}`,
+    `Mission: ${runObjective}`,
+    `Votes: ${voteNote}`,
+    `Deadlock: ${deadlockNote}`,
+    "Turn transcript:",
+    ...turnLines,
+    "Return JSON only using this shape:",
+    JSON.stringify(
+      {
+        recommendation: "string",
+        summary: "string",
+        statusLabel: "string",
+        sections: [
+          {
+            id: "string",
+            title: "string",
+            lines: ["string"],
+            sourceSequences: [1],
+          },
+        ],
+        markdown: "string",
+      },
+      null,
+      2,
+    ),
+    "Requirements:",
+    "- Include concrete strategy, execution plan, risks, and success metrics.",
+    "- Cite source turn numbers in sourceSequences for each section.",
+    "- Keep lines specific and actionable; avoid generic filler.",
+    "- Synthesize image/artifact outputs if present.",
+    "- Do not include markdown fences.",
+  ].join("\n");
+}
+
+export async function synthesizeGeminiFinalDraft(
+  input: FinalDraftInput & {
+    apiKey?: string | null;
+  },
+): Promise<GeminiFinalDraftSynthesisResult> {
+  const fallbackDraft = buildDeterministicFinalDraft(input);
+  const modelSelection = selectGeminiModel({
+    role: "executive",
+    thinkingProfile: "deep",
+  });
+  const prompt = buildGeminiFinalDraftPrompt(input);
+  const resolvedApiKey = (input.apiKey ?? process.env.GEMINI_API_KEY)?.trim() || "";
+
+  if (!resolvedApiKey) {
+    return {
+      draft: fallbackDraft,
+      telemetry: {
+        provider: "google-gemini",
+        source: "fallback",
+        model: modelSelection.model,
+        routeReason: `${modelSelection.routeReason}:no-api-key`,
+        thinkingLevel: modelSelection.thinkingLevel,
+        latencyMs: 0,
+        requestId: null,
+        statusCode: null,
+        tokenUsage: {
+          inputTokens: null,
+          outputTokens: null,
+          totalTokens: null,
+        },
+      },
+      rawResponseText: "",
+      rawResponse: {
+        fallback: true,
+        reason: "No GEMINI_API_KEY configured.",
+      },
+    };
+  }
+
+  try {
+    const result = await requestGeminiGenerateContentWithRetry({
+      model: modelSelection.model,
+      apiKey: resolvedApiKey,
+      prompt,
+      thinkingLevel: modelSelection.thinkingLevel,
+      builtInTools: [],
+    });
+
+    if (!result.response.ok) {
+      return {
+        draft: fallbackDraft,
+        telemetry: {
+          provider: "google-gemini",
+          source: "fallback",
+          model: modelSelection.model,
+          routeReason: `${modelSelection.routeReason}:non-ok`,
+          thinkingLevel: modelSelection.thinkingLevel,
+          latencyMs: result.latencyMs,
+          requestId: result.response.headers.get("x-request-id"),
+          statusCode: result.response.status,
+          tokenUsage: {
+            inputTokens: result.parsedBody.usageMetadata?.promptTokenCount ?? null,
+            outputTokens: result.parsedBody.usageMetadata?.candidatesTokenCount ?? null,
+            totalTokens: result.parsedBody.usageMetadata?.totalTokenCount ?? null,
+          },
+        },
+        rawResponseText: result.textBody,
+        rawResponse: result.parsedBody,
+      };
+    }
+
+    const rawResponseText = parsePrimaryText(result.parsedBody) || result.textBody;
+    const normalizedDraft = normalizeFinalDraftFromModel({
+      rawResponseText,
+      fallback: fallbackDraft,
+    });
+
+    return {
+      draft: normalizedDraft,
+      telemetry: {
+        provider: "google-gemini",
+        source: normalizedDraft.synthesisSource === "model" ? "live" : "fallback",
+        model: modelSelection.model,
+        routeReason: modelSelection.routeReason,
+        thinkingLevel: modelSelection.thinkingLevel,
+        latencyMs: result.latencyMs,
+        requestId: result.response.headers.get("x-request-id"),
+        statusCode: result.response.status,
+        tokenUsage: {
+          inputTokens: result.parsedBody.usageMetadata?.promptTokenCount ?? null,
+          outputTokens: result.parsedBody.usageMetadata?.candidatesTokenCount ?? null,
+          totalTokens: result.parsedBody.usageMetadata?.totalTokenCount ?? null,
+        },
+      },
+      rawResponseText,
+      rawResponse: result.parsedBody,
+    };
+  } catch (error) {
+    const reason =
+      error instanceof Error ? error.message.slice(0, 220) : "Unknown synthesis failure.";
+    return {
+      draft: fallbackDraft,
+      telemetry: {
+        provider: "google-gemini",
+        source: "fallback",
+        model: modelSelection.model,
+        routeReason: `${modelSelection.routeReason}:exception`,
+        thinkingLevel: modelSelection.thinkingLevel,
+        latencyMs: 0,
+        requestId: null,
+        statusCode: null,
+        tokenUsage: {
+          inputTokens: null,
+          outputTokens: null,
+          totalTokens: null,
+        },
+      },
+      rawResponseText: "",
+      rawResponse: {
+        fallback: true,
+        reason,
+      },
+    };
+  }
+}
+
 export async function executeGeminiTurn(
   input: ExecuteGeminiTurnInput,
 ): Promise<GeminiTurnExecutionResult> {
@@ -674,6 +1158,7 @@ export async function executeGeminiTurn(
     apiKey: resolvedApiKey,
     prompt,
     thinkingLevel: modelSelection.thinkingLevel,
+    builtInTools: buildGeminiBuiltInTools(input.candidate.sourceAgentTools),
   });
 
   let effectiveModel = modelSelection.model;
@@ -701,6 +1186,7 @@ export async function executeGeminiTurn(
       apiKey: resolvedApiKey,
       prompt,
       thinkingLevel: flashThinkingLevel,
+      builtInTools: buildGeminiBuiltInTools(input.candidate.sourceAgentTools),
     });
     effectiveModel = flashModel;
     effectiveRouteReason = `${modelSelection.routeReason}->flash-fallback`;

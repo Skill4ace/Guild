@@ -28,6 +28,10 @@ const ALLOWED_MIME_TYPES = new Set([
   "image/jpeg",
   "image/webp",
   "image/svg+xml",
+  "image/gif",
+  "video/mp4",
+  "video/quicktime",
+  "video/webm",
 ]);
 
 const MIME_BY_EXTENSION: Record<string, string> = {
@@ -41,6 +45,10 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   ".jpeg": "image/jpeg",
   ".webp": "image/webp",
   ".svg": "image/svg+xml",
+  ".gif": "image/gif",
+  ".mp4": "video/mp4",
+  ".mov": "video/quicktime",
+  ".webm": "video/webm",
 };
 
 const ALLOWED_EXTENSIONS = new Set<string>(VAULT_ACCEPTED_EXTENSIONS);

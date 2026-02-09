@@ -18,6 +18,11 @@ function createAgent(
     authorityWeight: 1,
     thinkingProfile: "standard",
     privateMemoryEnabled: false,
+    tools: {
+      googleSearchEnabled: false,
+      codeExecutionEnabled: false,
+      imageGenerationEnabled: false,
+    },
     persona: "",
     constraints: [],
     updatedAt: "2026-02-07T13:00:00.000Z",

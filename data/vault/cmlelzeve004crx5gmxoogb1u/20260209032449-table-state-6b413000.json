@@ -1,0 +1,15 @@
+{
+  "blinds": {
+    "small": 5,
+    "big": 10
+  },
+  "stack": {
+    "playerA": 950,
+    "playerB": 960
+  },
+  "board": [
+    "Qs",
+    "Jh",
+    "2d"
+  ]
+}

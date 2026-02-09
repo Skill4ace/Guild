@@ -30,6 +30,7 @@ export type CompiledPlanAgentNode = {
   role: CompilerAgentConfig["role"];
   authorityWeight: number;
   thinkingProfile: CompilerAgentConfig["thinkingProfile"];
+  tools: CompilerAgentConfig["tools"];
   incomingChannelIds: string[];
   outgoingChannelIds: string[];
 };
@@ -51,6 +52,7 @@ export type CompiledTurnCandidate = {
   sourceAgentId: string;
   sourceAgentName: string;
   sourceAgentObjective: string;
+  sourceAgentTools: CompilerAgentConfig["tools"];
   targetAgentId: string;
   targetAgentName: string;
   targetAgentObjective: string;
@@ -157,6 +159,7 @@ export function compileRunPlan(input: RunCompilerInput): CompiledRunPlan {
     role: agent.role,
     authorityWeight: agent.authorityWeight,
     thinkingProfile: agent.thinkingProfile,
+    tools: agent.tools,
     incomingChannelIds: [],
     outgoingChannelIds: [],
   }));
@@ -285,6 +288,7 @@ export function compileRunPlan(input: RunCompilerInput): CompiledRunPlan {
       sourceAgentId: source.agentId,
       sourceAgentName: source.name,
       sourceAgentObjective: agentObjectiveById.get(source.agentId) ?? "",
+      sourceAgentTools: source.tools,
       targetAgentId: target.agentId,
       targetAgentName: target.name,
       targetAgentObjective: agentObjectiveById.get(target.agentId) ?? "",

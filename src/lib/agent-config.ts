@@ -2,9 +2,11 @@ import type { Node } from "@xyflow/react";
 import { AgentRole, Prisma, ThinkingProfile } from "@prisma/client";
 
 import {
+  DEFAULT_AGENT_TOOLING,
   AGENT_ROLE_META,
   type AgentNodeData,
   type AgentRole as BoardAgentRole,
+  type AgentToolingConfig,
   type AgentThinkingProfile,
   parseConstraints,
   sanitizeAgentNodeData,
@@ -23,10 +25,38 @@ export type CompilerAgentConfig = {
   authorityWeight: number;
   thinkingProfile: AgentThinkingProfile;
   privateMemoryEnabled: boolean;
+  tools: AgentToolingConfig;
   persona: string;
   constraints: string[];
   updatedAt: string;
 };
+
+function parseAgentToolingFromMetadata(metadata: Prisma.JsonValue | null): AgentToolingConfig {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return { ...DEFAULT_AGENT_TOOLING };
+  }
+
+  const payload = metadata as Record<string, unknown>;
+  const tools =
+    payload.tools && typeof payload.tools === "object" && !Array.isArray(payload.tools)
+      ? (payload.tools as Record<string, unknown>)
+      : {};
+
+  return {
+    googleSearchEnabled:
+      typeof tools.googleSearchEnabled === "boolean"
+        ? tools.googleSearchEnabled
+        : DEFAULT_AGENT_TOOLING.googleSearchEnabled,
+    codeExecutionEnabled:
+      typeof tools.codeExecutionEnabled === "boolean"
+        ? tools.codeExecutionEnabled
+        : DEFAULT_AGENT_TOOLING.codeExecutionEnabled,
+    imageGenerationEnabled:
+      typeof tools.imageGenerationEnabled === "boolean"
+        ? tools.imageGenerationEnabled
+        : DEFAULT_AGENT_TOOLING.imageGenerationEnabled,
+  };
+}
 
 export function toPrismaAgentRole(role: BoardAgentRole): AgentRole {
   if (role === "executive") return AgentRole.EXECUTIVE;
@@ -85,6 +115,9 @@ export async function syncWorkspaceAgentsFromBoard(
         authorityWeight: config.authorityWeight,
         thinkingProfile: toPrismaThinkingProfile(config.thinkingProfile),
         privateMemoryEnabled: config.privateMemoryEnabled,
+        metadata: {
+          tools: config.tools,
+        },
         persona: config.persona || null,
         constraints: config.constraints,
       },
@@ -97,6 +130,9 @@ export async function syncWorkspaceAgentsFromBoard(
         authorityWeight: config.authorityWeight,
         thinkingProfile: toPrismaThinkingProfile(config.thinkingProfile),
         privateMemoryEnabled: config.privateMemoryEnabled,
+        metadata: {
+          tools: config.tools,
+        },
         persona: config.persona || null,
         constraints: config.constraints,
       },
@@ -144,6 +180,7 @@ export function toCompilerAgentConfig(
     privateMemoryEnabled: boolean;
     persona: string | null;
     constraints: Prisma.JsonValue | null;
+    metadata: Prisma.JsonValue | null;
     updatedAt: Date;
   },
 ): CompilerAgentConfig {
@@ -160,6 +197,7 @@ export function toCompilerAgentConfig(
     authorityWeight: Math.max(1, Math.min(10, agent.authorityWeight)),
     thinkingProfile: fromPrismaThinkingProfile(agent.thinkingProfile),
     privateMemoryEnabled: agent.privateMemoryEnabled,
+    tools: parseAgentToolingFromMetadata(agent.metadata),
     persona: agent.persona ?? "",
     constraints: parseConstraints(agent.constraints),
     updatedAt: agent.updatedAt.toISOString(),

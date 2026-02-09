@@ -1,0 +1,4 @@
+timestamp,route,p95_ms,error_rate
+09:00,/runs,3800,0.034
+09:05,/runs,4100,0.041
+09:10,/board,2100,0.012

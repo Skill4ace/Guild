@@ -4,6 +4,7 @@ import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 
 import {
   AGENT_ROLE_META,
+  AGENT_TOOLING_META,
   AGENT_THINKING_PROFILE_META,
   type AgentNodeData,
   type AgentRole,
@@ -53,6 +54,11 @@ export function AgentNode({ data, selected }: NodeProps<Node<AgentNodeData>>) {
   const roleBadgeLabel = meta.label.includes(" - ")
     ? meta.label.split(" - ")[1]
     : meta.label;
+  const enabledTools = (
+    Object.keys(AGENT_TOOLING_META) as Array<keyof AgentNodeData["tools"]>
+  )
+    .filter((toolKey) => data.tools[toolKey])
+    .map((toolKey) => AGENT_TOOLING_META[toolKey].label);
   const handleClass = "!h-2.5 !w-2.5 !border !border-slate-700 !bg-white";
 
   return (
@@ -101,6 +107,14 @@ export function AgentNode({ data, selected }: NodeProps<Node<AgentNodeData>>) {
               Private memory on
             </span>
           ) : null}
+          {enabledTools.map((toolLabel) => (
+            <span
+              key={toolLabel}
+              className="rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[9px] font-semibold text-indigo-700"
+            >
+              {toolLabel}
+            </span>
+          ))}
         </div>
         <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
           Task

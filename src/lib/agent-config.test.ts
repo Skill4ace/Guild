@@ -46,6 +46,13 @@ describe("agent-config", () => {
       authorityWeight: 14,
       thinkingProfile: ThinkingProfile.FAST,
       privateMemoryEnabled: false,
+      metadata: {
+        tools: {
+          googleSearchEnabled: true,
+          codeExecutionEnabled: false,
+          imageGenerationEnabled: true,
+        },
+      },
       persona: null,
       constraints: ["No scope creep", "Provide status updates"],
       updatedAt: new Date("2026-02-06T18:00:00.000Z"),
@@ -58,5 +65,10 @@ describe("agent-config", () => {
       "Provide status updates",
     ]);
     expect(normalized.persona).toBe("");
+    expect(normalized.tools).toEqual({
+      googleSearchEnabled: true,
+      codeExecutionEnabled: false,
+      imageGenerationEnabled: true,
+    });
   });
 });
